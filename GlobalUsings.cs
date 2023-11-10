@@ -1,0 +1,9 @@
+global using NuGet.Common;
+global using NuGet.Configuration;
+global using NuGet.Frameworks;
+global using NuGet.PackageManagement;
+global using NuGet.Packaging.Core;
+global using NuGet.Protocol;
+global using NuGet.Protocol.Core.Types;
+global using NuGet.Resolver;
+global using NuGet.Versioning;
