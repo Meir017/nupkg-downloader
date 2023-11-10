@@ -1,4 +1,6 @@
-﻿using System.Text.Json;
+﻿using NuGet.Packaging;
+using NuGet.Packaging.Signing;
+using NuGet.ProjectManagement;
 
 if (args.Length != 2)
 {
@@ -11,59 +13,21 @@ var packageVersion = args[1];
 var package = new PackageIdentity(packageId, NuGetVersion.Parse(packageVersion));
 
 ILogger logger = new ConsoleLogger();
-SourceCacheContext sourceCache = NullSourceCacheContext.Instance;
+ISettings settings = NullSettings.Instance;
 var sourceRepository = CreateSourceRepository();
 
-var packageMetadataResource = await sourceRepository.GetResourceAsync<PackageMetadataResource>();
-var searchMetadata = await packageMetadataResource.GetMetadataAsync(packageId, true, true, sourceCache, logger, default);
+ISourceRepositoryProvider sourceRepositoryProvider = new SourceRepositoryProvider(new PackageSourceProvider(settings), Repository.Provider.GetCoreV3());
+var packagesPath = Path.GetFullPath("./packages");
+var packageManager = new NuGetPackageManager(sourceRepositoryProvider, settings, packagesPath);
 
-var packageMetadata = searchMetadata.FirstOrDefault(m => m.Identity.Version.ToString() == packageVersion);
-if (packageMetadata == null)
+NuGetProject project = new FolderNuGetProject(packagesPath);
+var clientPolicyContext = ClientPolicyContext.GetClientPolicy(settings, logger);
+INuGetProjectContext projectContext = new ConsoleProjectContext(logger)
 {
-    Console.WriteLine($"Package {packageId} {packageVersion} not found");
-    Console.WriteLine("Available versions:");
-    Console.WriteLine("\t" + string.Join(",\n\t", searchMetadata.Select(m => m.Identity.Version.ToString())));
-    Environment.Exit(1);
-}
+    PackageExtractionContext = new PackageExtractionContext(PackageSaveMode.Nuspec, XmlDocFileSaveMode.None, clientPolicyContext, logger)
+};
 
-Console.WriteLine($"{packageMetadata.Identity.Id} {packageMetadata.Identity.Version} - {packageMetadata.ToJson()}");
-
-var dependencies = (await ResolverGather.GatherAsync(new GatherContext
-{
-    PrimaryTargets = new[] { package },
-    InstalledPackages = Array.Empty<SourcePackageDependencyInfo>(),
-    TargetFramework = NuGetFramework.Parse("net6.0"),
-    PrimarySources = new[] { sourceRepository },
-    AllSources = new[] { sourceRepository },
-    PackagesFolderSource = sourceRepository,
-    ResolutionContext = new(DependencyBehavior.HighestMinor, false, false, VersionConstraints.ExactRelease),
-}, default)).ToArray();
-
-var latestMajorVersionDependencies = dependencies
-    .Where(d => !d.Version.IsPrerelease && d.Listed)
-    .GroupBy(d => d.Id)
-    .SelectMany(g =>
-    {
-        var highestMajors = g.GroupBy(x => x.Version.Major);
-        return g.GroupBy(x => x.Version.Major).Select(x => x.MaxBy(x => x.Version));
-    })
-    .ToArray();
-
-Console.WriteLine($"Found {dependencies.Length} dependencies");
-Console.WriteLine($"Found {latestMajorVersionDependencies.Length} latest major version dependencies");
-
-var jsonOutput = JsonSerializer.Serialize(latestMajorVersionDependencies.Select(x => new
-{
-    id = x.Id,
-    version = x.Version.ToString(),
-    downloadUri = x.DownloadUri
-}), new JsonSerializerOptions
-{
-    WriteIndented = true
-});
-await File.WriteAllTextAsync($"{packageId}-{packageVersion}-dependencies.json", jsonOutput);
-
-return;
+await packageManager.InstallPackageAsync(project, package, new ResolutionContext(), projectContext, sourceRepository, Array.Empty<SourceRepository>(), CancellationToken.None);
 
 SourceRepository CreateSourceRepository()
 {
