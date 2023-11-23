@@ -1,5 +1,8 @@
 using System.Net.Mime;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Net.Http.Headers;
+using NuGet.PackageManagement;
 using NuGet.Packaging.Core;
 using NuGet.Versioning;
 using NupkgDownloader.Core;
@@ -7,17 +10,32 @@ using NupkgDownloader.Core;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddNupkgFetcher();
+builder.Services.AddMemoryCache();
 
 var app = builder.Build();
 
 app.UseHttpsRedirection();
-app.UseResponseCaching();
+
+app.Use((context, next) =>
+{
+    context.Response.GetTypedHeaders().CacheControl = new CacheControlHeaderValue
+    {
+        Public = true,
+        MaxAge = TimeSpan.FromDays(1)
+    };
+    return next();
+});
 
 app.MapGet("/get-download-link", (string packageId, string packageVersion) => Results.Redirect(BuildNupkgDownloadLink(packageId, packageVersion)));
-app.MapGet("/get-download-links", async (string packageId, string packageVersion, HttpContext context, [FromServices] NupkgFetcher nupkgFetcher) =>
+app.MapGet("/get-download-links", async (string packageId, string packageVersion, HttpContext context, [FromServices] NupkgFetcher nupkgFetcher, [FromServices] IMemoryCache cache) =>
 {
     var package = new PackageIdentity(packageId, NuGetVersion.Parse(packageVersion));
-    var packages = await nupkgFetcher.GetPackagesDependenciesAsync(package, SourceRepositoryCreator.NugetGallery);
+    var cacheKey = $"{packageId}_{packageVersion}";
+    if (!cache.TryGetValue<IEnumerable<NuGetProjectAction>>(cacheKey, out var packages))
+    {
+        packages = await nupkgFetcher.GetPackagesDependenciesAsync(package, SourceRepositoryCreator.NugetGallery);
+        cache.Set(cacheKey, packages.ToArray(), TimeSpan.FromDays(1));
+    }
 
     context.Response.ContentType = "text/html; charset=utf-8";
     await context.Response.WriteAsync($"""
