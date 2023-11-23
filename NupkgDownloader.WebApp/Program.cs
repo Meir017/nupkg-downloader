@@ -1,3 +1,4 @@
+using System.Net.Mime;
 using Microsoft.AspNetCore.Mvc;
 using NuGet.Packaging.Core;
 using NuGet.Versioning;
@@ -12,31 +13,32 @@ var app = builder.Build();
 app.UseHttpsRedirection();
 app.UseResponseCaching();
 
-app.MapGet("/get-download-link", async (string packageId, string packageVersion) =>
-{
-    return Results.Redirect(BuildNupkgDownloadLink(packageId, packageVersion));
-});
-app.MapGet("/get-download-links", async (string packageId, string packageVersion, [FromServices] NupkgFetcher nupkgFetcher) =>
+app.MapGet("/get-download-link", (string packageId, string packageVersion) => Results.Redirect(BuildNupkgDownloadLink(packageId, packageVersion)));
+app.MapGet("/get-download-links", async (string packageId, string packageVersion, HttpContext context, [FromServices] NupkgFetcher nupkgFetcher) =>
 {
     var package = new PackageIdentity(packageId, NuGetVersion.Parse(packageVersion));
     var packages = await nupkgFetcher.GetPackagesDependenciesAsync(package, SourceRepositoryCreator.NugetGallery);
 
-    return packages.Select(x => new
-    {
-        id = x.PackageIdentity.Id,
-        version = x.PackageIdentity.Version.ToNormalizedString(),
-        downloadLink = BuildNupkgDownloadLink(x.PackageIdentity.Id, x.PackageIdentity.Version.ToNormalizedString())
-    });
+    context.Response.ContentType = "text/html; charset=utf-8";
+    await context.Response.WriteAsync($"""
+        <h1>Download links for {packageId} {packageVersion} dependencies</h1>
+        <ul>
+            {string.Join("\n", packages.Select(x => $"<li><a href=\"{BuildNupkgDownloadLink(x.PackageIdentity.Id, x.PackageIdentity.Version.ToNormalizedString())}\">{x.PackageIdentity.Id} {x.PackageIdentity.Version.ToNormalizedString()}</a></li>"))}
+        </ul>
+    """);
 });
 
 app.MapFallback(async (HttpContext context) =>
 {
     var urlBase = $"https://{context.Request.Host}";
-    await context.Response.WriteAsync($@"
-    Endpoints: 
-    - {urlBase}/get-download-link?packageId=Newtonsoft.Json&packageVersion=12.0.3
-    - {urlBase}/get-download-links?packageId=Newtonsoft.Json&packageVersion=12.0.3
-    ");
+    context.Response.ContentType = "text/html; charset=utf-8";
+    await context.Response.WriteAsync(
+        $"""
+            <h1>Nupkg Downloader</h1>
+            
+            <p>Get download link for a package</p> <a href="{urlBase}/get-download-link?packageId=Newtonsoft.Json&amp;packageVersion=12.0.3">/get-download-link?packageId=Newtonsoft.Json&amp;packageVersion=12.0.3</a>
+            <p>Get download links for a package and its dependencies</p> <a href="{urlBase}/get-download-links?packageId=Newtonsoft.Json&amp;packageVersion=12.0.3">/get-download-links?packageId=Newtonsoft.Json&amp;packageVersion=12.0.3</a>
+        """);
 });
 
 app.Run();
