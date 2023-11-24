@@ -51,7 +51,7 @@ app.MapGet("/get-download-links", async (string packageId, string packageVersion
     await context.Response.WriteAsync($"""
         <h1>Download links for {packageId} {packageVersion} dependencies</h1>
         <ul>
-            {string.Join("\n", packages.Select(x => $"<li><a href=\"{BuildNupkgDownloadLink(x.PackageIdentity.Id, x.PackageIdentity.Version.ToNormalizedString())}\">{x.PackageIdentity.Id} {x.PackageIdentity.Version.ToNormalizedString()}</a></li>"))}
+            {string.Join("\n", packages.Select(x => $"<li><a href=\"{BuildNupkgDownloadLink(x.PackageIdentity.Id, x.PackageIdentity.Version.ToNormalizedString())}\" target=\"_blank\">{x.PackageIdentity.Id} {x.PackageIdentity.Version.ToNormalizedString()}</a></li>"))}
         </ul>
         {downloadAllPackagesSnippet}
     """);
