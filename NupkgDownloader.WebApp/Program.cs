@@ -1,7 +1,5 @@
-using System.Net.Mime;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Net.Http.Headers;
 using NuGet.PackageManagement;
 using NuGet.Packaging.Core;
 using NuGet.Versioning;
@@ -16,33 +14,46 @@ var app = builder.Build();
 
 app.UseHttpsRedirection();
 
-app.Use((context, next) =>
-{
-    context.Response.GetTypedHeaders().CacheControl = new CacheControlHeaderValue
-    {
-        Public = true,
-        MaxAge = TimeSpan.FromDays(1)
-    };
-    return next();
-});
-
 app.MapGet("/get-download-link", (string packageId, string packageVersion) => Results.Redirect(BuildNupkgDownloadLink(packageId, packageVersion)));
 app.MapGet("/get-download-links", async (string packageId, string packageVersion, HttpContext context, [FromServices] NupkgFetcher nupkgFetcher, [FromServices] IMemoryCache cache) =>
 {
     var package = new PackageIdentity(packageId, NuGetVersion.Parse(packageVersion));
     var cacheKey = $"{packageId}_{packageVersion}";
-    if (!cache.TryGetValue<IEnumerable<NuGetProjectAction>>(cacheKey, out var packages))
+    var packages = await cache.GetOrCreateAsync(cacheKey, async entry =>
     {
-        packages = await nupkgFetcher.GetPackagesDependenciesAsync(package, SourceRepositoryCreator.NugetGallery);
-        cache.Set(cacheKey, packages.ToArray(), TimeSpan.FromDays(1));
+        entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1);
+        try
+        {
+            return await nupkgFetcher.GetPackagesDependenciesAsync(package, SourceRepositoryCreator.NugetGallery);
+        }
+        catch (InvalidOperationException)
+        {
+            return Array.Empty<NuGetProjectAction>();
+        }
+    });
+    if (packages?.Any() != true)
+    {
+        context.Response.StatusCode = 404;
+        await context.Response.WriteAsync($"Package {packageId} {packageVersion} not found");
+        return;
     }
 
     context.Response.ContentType = "text/html; charset=utf-8";
+    const string downloadAllPackagesSnippet = @"<button id=""download"">Download all packages</button>
+    <script>
+            document.querySelector('#download').addEventListener('click', function() { 
+            const elements = document.querySelectorAll('a');
+            for (const element of elements) {
+                element.click();
+            }
+        });
+    </script>";
     await context.Response.WriteAsync($"""
         <h1>Download links for {packageId} {packageVersion} dependencies</h1>
         <ul>
             {string.Join("\n", packages.Select(x => $"<li><a href=\"{BuildNupkgDownloadLink(x.PackageIdentity.Id, x.PackageIdentity.Version.ToNormalizedString())}\">{x.PackageIdentity.Id} {x.PackageIdentity.Version.ToNormalizedString()}</a></li>"))}
         </ul>
+        {downloadAllPackagesSnippet}
     """);
 });
 
